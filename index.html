@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Audio + Overlays</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      margin: 32px;
+      color: #0f172a;
+      background: #f1f5f9;
+      font-size: 18px;
+      line-height: 1.6;
+    }
+    h2 { font-size: 28px; margin-bottom: 18px; }
+    .row {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+    #waveform {
+      height: 180px;
+      border-radius: 18px;
+      background: #f8fafc;
+      border: 1px solid #d0d7e3;
+      box-shadow: inset 0 1px 2px rgba(15,23,42,0.08);
+    }
+    button {
+      padding: 12px 20px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: white;
+      cursor: pointer;
+      font-size: 18px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+    button:hover {
+      background: #e2e8f0;
+      transform: translateY(-1px);
+      box-shadow: 0 8px 16px rgba(15,23,42,0.08);
+    }
+    #now { font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; }
+
+    #inspector {
+      margin-top: 28px;
+      display: grid;
+      gap: 24px;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      align-items: stretch;
+    }
+    .card {
+      background: #ffffff;
+      border: 2px solid rgba(148,163,184,0.4);
+      border-radius: 18px;
+      padding: 24px 26px;
+      box-shadow: 0 20px 48px rgba(15,23,42,0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    }
+    .card .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .card h3 {
+      font-size: 22px;
+      margin: 0;
+      color: #0f172a;
+      letter-spacing: -0.01em;
+    }
+    .muted {
+      color: #64748b;
+      font-size: 16px;
+    }
+    #segmentText {
+      font-size: 20px;
+      line-height: 1.5;
+      color: #0f172a;
+      white-space: pre-wrap;
+    }
+    .stat-grid { display: grid; gap: 16px; }
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: baseline;
+    }
+    .stat .label {
+      font-size: 16px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #475569;
+    }
+    .stat .value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #0f172a;
+      text-align: right;
+      flex: 1;
+      letter-spacing: -0.01em;
+    }
+    .card.mismatch {
+      border-color: rgba(225,29,72,0.6);
+      background: linear-gradient(135deg, rgba(254,226,226,0.65), rgba(255,255,255,0.9));
+      box-shadow: 0 24px 60px rgba(225,29,72,0.22);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(79,70,229,0.12);
+      color: #3730a3;
+    }
+    .badge.mismatch {
+      background: rgba(225,29,72,0.15);
+      color: #be123c;
+    }
+    .wavesurfer-region {
+      border: none !important;
+      box-shadow: none !important;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <h2>Audio + Sentiment/Emotion Overlays</h2>
+
+  <div class="row">
+    <button id="play">▶️ Play/Pause</button>
+    <button id="stop">⏹️ Stop</button>
+    <span id="now">0.00s</span>
+  </div>
+
+  <div id="waveform"></div>
+
+  <section id="inspector">
+    <article class="card" id="segmentCard">
+      <div class="header">
+        <h3>Segment</h3>
+        <span id="segmentBadge" class="badge">In sync</span>
+      </div>
+      <p id="segmentMeta" class="muted">Select a segment on the waveform to explore its analysis.</p>
+      <p id="segmentText"></p>
+    </article>
+    <article class="card" id="voiceCard">
+      <h3>Voice Analysis</h3>
+      <div id="voiceDetails" class="stat-grid"></div>
+    </article>
+    <article class="card" id="gladiaCard">
+      <h3>Gladia Analysis</h3>
+      <div id="gladiaDetails" class="stat-grid"></div>
+    </article>
+  </section>
+
+  <!-- Load your logic -->
+  <script type="module" src="./visuals.js"></script>
+</body>
+</html>
