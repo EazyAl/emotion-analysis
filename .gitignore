@@ -1,0 +1,11 @@
+keys
+*.png
+*.PNG
+*.json
+*.JSON
+*.mp3
+*.MP3
+venv/
+__pycache__/
+gladia_downloads/
+
