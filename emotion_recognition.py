@@ -28,6 +28,8 @@ LOGGER = logging.getLogger(__name__)
 
 MODEL_ID = "3loi/SER-Odyssey-Baseline-WavLM-Multi-Attributes"
 
+DEFAULT_NORMALIZATION_EPS = 1e-6
+
 
 def load_audio(path: Path, target_rate: int) -> Tuple[np.ndarray, int]:
     """Load audio as mono signal resampled to the target rate."""
@@ -66,6 +68,164 @@ class InferenceResult:
     embedding_preview: Optional[List[float]] = None
     clip_voice_sentiment: Optional[str] = None
     clip_voice_emotion: Optional[Dict[str, Any]] = None
+
+
+def load_ser_model(device: torch.device) -> Tuple[torch.nn.Module, Dict[str, float]]:
+    """
+    Load the SER model and return it together with a light configuration dict.
+
+    The returned configuration contains the sampling rate and normalization
+    statistics required to prepare waveform tensors for inference.
+    """
+    LOGGER.info("Loading SER model %s on device %s", MODEL_ID, device)
+    model = AutoModelForAudioClassification.from_pretrained(
+        MODEL_ID,
+        trust_remote_code=True,
+    ).to(device)
+    model.eval()
+    config = model.config
+
+    model_config: Dict[str, float] = {
+        "sampling_rate": int(getattr(config, "sampling_rate", 16_000)),
+        "mean": float(getattr(config, "mean", 0.0)),
+        "std": float(getattr(config, "std", 1.0)),
+        "eps": DEFAULT_NORMALIZATION_EPS,
+    }
+    return model, model_config
+
+
+def _ensure_mono_array(waveform: np.ndarray) -> np.ndarray:
+    """
+    Ensure the waveform is a contiguous 1-D float32 numpy array.
+
+    - Multi-channel audio is averaged to mono.
+    - Arrays are copied if necessary to guarantee C-contiguity for torch.
+    """
+    if waveform.ndim == 0:
+        return np.zeros((0,), dtype=np.float32)
+
+    if waveform.ndim > 1:
+        waveform = np.mean(waveform, axis=0)
+
+    if not np.issubdtype(waveform.dtype, np.floating):
+        waveform = waveform.astype(np.float32, copy=False)
+
+    waveform = np.ascontiguousarray(waveform, dtype=np.float32)
+    return waveform
+
+
+def _prepare_model_inputs(
+    waveform: np.ndarray,
+    *,
+    model_config: Dict[str, float],
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Normalize a waveform with the model statistics and create tensors suitable
+    for WavLM inference.
+    """
+    mean = float(model_config.get("mean", 0.0))
+    std = float(model_config.get("std", 1.0))
+    eps = float(model_config.get("eps", DEFAULT_NORMALIZATION_EPS))
+
+    normalized = (waveform - mean) / (std + eps)
+    segment_values = torch.tensor(
+        normalized,
+        dtype=torch.float32,
+        device=device,
+    ).unsqueeze(0)
+    segment_mask = torch.ones(
+        (1, segment_values.shape[-1]),
+        dtype=torch.bool,
+        device=device,
+    )
+    return segment_values, segment_mask
+
+
+def _model_forward(
+    model: torch.nn.Module,
+    segment_values: torch.Tensor,
+    segment_mask: torch.Tensor,
+) -> Tuple[float, float, float]:
+    """
+    Execute a forward pass and return raw arousal, dominance, valence logits.
+    """
+    with torch.no_grad():
+        outputs = model(segment_values, segment_mask)
+    arousal, dominance, valence = (
+        outputs.detach().cpu().numpy().squeeze().tolist()
+    )
+    return float(arousal), float(dominance), float(valence)
+
+
+def process_audio_array(
+    audio_array: np.ndarray,
+    *,
+    sample_rate: int,
+    model: torch.nn.Module,
+    model_config: Dict[str, float],
+    device: torch.device,
+) -> Dict[str, Any]:
+    """
+    Run inference on a raw audio array that belongs to an arbitrary chunk.
+
+    The chunk is resampled (if required), normalized, fed through the SER model,
+    and finally mapped to Gladia-style sentiment/emotion labels.
+
+    Returns a dictionary mirroring the voice-analysis portion of SegmentResult.
+    """
+    if audio_array is None:
+        raise ValueError("audio_array must not be None")
+
+    waveform = _ensure_mono_array(np.asarray(audio_array))
+    if waveform.size == 0:
+        raise ValueError("audio_array must contain at least one sample")
+
+    target_rate = int(model_config.get("sampling_rate", 16_000))
+    if sample_rate != target_rate:
+        waveform = librosa.resample(
+            waveform,
+            orig_sr=sample_rate,
+            target_sr=target_rate,
+            res_type="soxr_vhq",
+        )
+
+    segment_values, segment_mask = _prepare_model_inputs(
+        waveform,
+        model_config=model_config,
+        device=device,
+    )
+    arousal, dominance, valence = _model_forward(model, segment_values, segment_mask)
+
+    mapping = map_vad_to_gladia(
+        valence=valence,
+        arousal=arousal,
+        dominance=dominance,
+        input_range="zero_one",
+    )
+
+    normalized_vad = {
+        "valence": float(mapping["normalized_vad"]["valence"]),
+        "arousal": float(mapping["normalized_vad"]["arousal"]),
+        "dominance": float(mapping["normalized_vad"]["dominance"]),
+    }
+    emotion_probs = [
+        {"label": label, "probability": float(prob)}
+        for label, prob in mapping.get("emotion_probs", [])
+    ]
+
+    return {
+        "voice_sentiment": mapping["sentiment"],
+        "voice_emotion_label": mapping["emotion"]["label"],
+        "voice_emotion_prob": float(mapping["emotion"]["confidence"]),
+        "raw_vad": {
+            "valence": float(valence),
+            "arousal": float(arousal),
+            "dominance": float(dominance),
+        },
+        "normalized_vad": normalized_vad,
+        "emotion_probs": emotion_probs,
+    }
 
 
 def load_gladia_segments(json_path: Optional[Path]) -> List[Dict]:
@@ -118,18 +278,18 @@ def run_inference(
     audio_path: Path,
     device: torch.device,
     gladia_segments: Optional[List[Dict]] = None,
+    *,
+    model: Optional[torch.nn.Module] = None,
+    model_config: Optional[Dict[str, float]] = None,
 ) -> InferenceResult:
-    LOGGER.info("Loading SER model %s on device %s", MODEL_ID, device)
-    model = AutoModelForAudioClassification.from_pretrained(
-        MODEL_ID,
-        trust_remote_code=True,
-    ).to(device)
-    model.eval()
-    config = model.config
-    target_rate = int(getattr(config, "sampling_rate", 16_000))
-    mean = float(getattr(config, "mean", 0.0))
-    std = float(getattr(config, "std", 1.0))
-    eps = 1e-6
+    if model is None or model_config is None:
+        model, model_config = load_ser_model(device)
+    else:
+        LOGGER.info("Using pre-loaded SER model on device %s", device)
+
+    target_rate = int(model_config.get("sampling_rate", 16_000))
+    mean = float(model_config.get("mean", 0.0))
+    std = float(model_config.get("std", 1.0))
     LOGGER.info("Model params: sampling_rate=%s mean=%.6f std=%.6f", target_rate, mean, std)
 
     waveform, sampling_rate = load_audio(audio_path, target_rate)
@@ -155,15 +315,10 @@ def run_inference(
                 )
                 continue
 
-            norm_segment = (segment_waveform - mean) / (std + eps)
-            segment_values = torch.tensor(
-                norm_segment,
-                dtype=torch.float32,
-                device=device,
-            ).unsqueeze(0)
-            segment_mask = torch.ones(
-                (1, segment_values.shape[-1]),
-                dtype=torch.bool,
+            segment_waveform = _ensure_mono_array(segment_waveform)
+            segment_values, segment_mask = _prepare_model_inputs(
+                segment_waveform,
+                model_config=model_config,
                 device=device,
             )
 
@@ -176,10 +331,8 @@ def run_inference(
                 segment_values.shape[-1],
             )
             seg_start_time = time.perf_counter()
-            with torch.no_grad():
-                segment_outputs = model(segment_values, segment_mask)
+            arousal, dominance, valence = _model_forward(model, segment_values, segment_mask)
             seg_elapsed = time.perf_counter() - seg_start_time
-            arousal, dominance, valence = segment_outputs.detach().cpu().numpy().squeeze().tolist()
             LOGGER.debug(
                 "Segment %03d logits (arousal=%.4f, dominance=%.4f, valence=%.4f) in %.2fs",
                 index,

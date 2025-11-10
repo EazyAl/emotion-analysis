@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Real-Time Emotion Analysis</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 32px;
+      background: radial-gradient(circle at top, #111827 0%, #020617 55%, #000000 100%);
+      color: #e2e8f0;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+    h1 {
+      font-size: clamp(32px, 5vw, 48px);
+      margin: 0;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      margin: 8px 0 0;
+      color: rgba(226, 232, 240, 0.7);
+      max-width: 640px;
+      line-height: 1.6;
+      font-size: 18px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 20px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.35);
+    }
+    button {
+      padding: 16px 32px;
+      border-radius: 14px;
+      border: none;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      letter-spacing: 0.02em;
+    }
+    #startBtn {
+      background: linear-gradient(135deg, #10b981, #0d9488);
+      color: white;
+      box-shadow: 0 16px 40px rgba(16, 185, 129, 0.35);
+    }
+    #startBtn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 20px 50px rgba(16, 185, 129, 0.45);
+    }
+    #stopBtn {
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      color: white;
+      box-shadow: 0 16px 40px rgba(239, 68, 68, 0.35);
+    }
+    #stopBtn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .status {
+      padding: 14px 20px;
+      border-radius: 12px;
+      background: rgba(59, 130, 246, 0.12);
+      border-left: 4px solid rgba(59, 130, 246, 0.8);
+      color: rgba(226, 232, 240, 0.9);
+      font-size: 16px;
+      flex: 1;
+      min-width: 200px;
+    }
+    .panels {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+    }
+    .card {
+      background: rgba(15, 23, 42, 0.75);
+      border-radius: 20px;
+      padding: 26px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 24px 70px rgba(15, 23, 42, 0.45);
+      transition: border-color 180ms ease, box-shadow 180ms ease;
+    }
+    .card h2 {
+      margin: 0 0 16px;
+      font-size: 24px;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .transcript {
+      background: rgba(51, 65, 85, 0.65);
+      padding: 18px;
+      border-radius: 12px;
+      min-height: 120px;
+      line-height: 1.6;
+      font-size: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .metrics {
+      margin-top: 18px;
+      display: grid;
+      gap: 14px;
+    }
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: baseline;
+    }
+    .metric .label {
+      text-transform: uppercase;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      color: rgba(148, 163, 184, 0.85);
+      font-weight: 600;
+    }
+    .metric .value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #e2e8f0;
+      letter-spacing: -0.01em;
+    }
+    .debug-box {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco;
+      font-size: 13px;
+      max-height: 220px;
+      overflow: auto;
+      white-space: pre-wrap;
+      color: #cbd5f5;
+    }
+    .mismatch {
+      border-color: rgba(250, 204, 21, 0.75);
+      box-shadow: 0 24px 80px rgba(250, 204, 21, 0.2);
+      animation: pulse 2.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { border-color: rgba(250, 204, 21, 0.35); }
+      50% { border-color: rgba(248, 113, 113, 0.7); }
+    }
+    .note {
+      font-size: 14px;
+      color: rgba(148, 163, 184, 0.75);
+      line-height: 1.6;
+    }
+    @media (max-width: 600px) {
+      .controls {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      button {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Real-Time Emotion Analysis</h1>
+      <p class="subtitle">
+        Stream audio from your microphone and watch Gladia's text sentiment and our local vocal emotion analysis update live. Ideal for demos — no pre-processing required.
+      </p>
+    </header>
+
+    <section class="controls">
+      <button id="startBtn">🎤 Start Recording</button>
+      <button id="stopBtn" disabled>⏹️ Stop</button>
+      <div id="status" class="status">Ready when you are.</div>
+    </section>
+
+    <section class="panels">
+      <article class="card" id="gladiaCard">
+        <h2>📝 Gladia (Text-Based)</h2>
+        <div id="gladiaTranscript" class="transcript">Waiting for speech input…</div>
+        <div class="metrics">
+          <div class="metric">
+            <span class="label">Sentiment</span>
+            <span class="value" id="gladiaSentiment">—</span>
+          </div>
+          <div class="metric">
+            <span class="label">Emotion</span>
+            <span class="value" id="gladiaEmotion">—</span>
+          </div>
+          <div class="metric">
+            <span class="label">Confidence</span>
+            <span class="value" id="gladiaConfidence">—</span>
+          </div>
+        </div>
+        <pre id="gladiaRaw" class="debug-box" aria-live="polite"></pre>
+        <p class="note">Gladia transcribes the words and estimates sentiment/emotion from the text.</p>
+      </article>
+
+      <article class="card" id="voiceCard">
+        <h2>🎵 Voice Analysis (Audio-Based)</h2>
+        <div class="metrics">
+          <div class="metric">
+            <span class="label">Sentiment</span>
+            <span class="value" id="voiceSentiment">—</span>
+          </div>
+          <div class="metric">
+            <span class="label">Emotion</span>
+            <span class="value" id="voiceEmotion">—</span>
+          </div>
+          <div class="metric">
+            <span class="label">Confidence</span>
+            <span class="value" id="voiceConfidence">—</span>
+          </div>
+          <div class="metric">
+            <span class="label">Valence</span>
+            <span class="value" id="valence">—</span>
+          </div>
+          <div class="metric">
+            <span class="label">Arousal</span>
+            <span class="value" id="arousal">—</span>
+          </div>
+          <div class="metric">
+            <span class="label">Dominance</span>
+            <span class="value" id="dominance">—</span>
+          </div>
+        </div>
+        <p class="note">Our SER Odyssey WavLM model listens to vocal cues regardless of actual words.</p>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') +
+      location.host.replace(/:\d+$/, '') +
+      ':8000/ws/analyze'
+
+    const startBtn = document.getElementById('startBtn')
+    const stopBtn = document.getElementById('stopBtn')
+    const statusEl = document.getElementById('status')
+
+    const gladiaTranscript = document.getElementById('gladiaTranscript')
+    const gladiaSentiment = document.getElementById('gladiaSentiment')
+    const gladiaEmotion = document.getElementById('gladiaEmotion')
+    const gladiaConfidence = document.getElementById('gladiaConfidence')
+    const gladiaCard = document.getElementById('gladiaCard')
+    const gladiaRaw = document.getElementById('gladiaRaw')
+
+    const voiceSentiment = document.getElementById('voiceSentiment')
+    const voiceEmotion = document.getElementById('voiceEmotion')
+    const voiceConfidence = document.getElementById('voiceConfidence')
+    const valence = document.getElementById('valence')
+    const arousal = document.getElementById('arousal')
+    const dominance = document.getElementById('dominance')
+    const voiceCard = document.getElementById('voiceCard')
+
+    let ws = null
+    let audioContext = null
+    let processorNode = null
+    let mediaStream = null
+    let isRecording = false
+
+    let lastGladiaSentiment = null
+    let lastGladiaEmotion = null
+    let lastVoiceSentiment = null
+    let lastVoiceEmotion = null
+
+    const SAMPLE_RATE = 16000
+
+    startBtn.addEventListener('click', async () => {
+      if (isRecording) return
+
+      try {
+        statusEl.textContent = 'Requesting microphone access…'
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: SAMPLE_RATE,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        })
+
+        ws = new WebSocket(WS_URL)
+
+        ws.onopen = () => {
+          startStreaming()
+          statusEl.textContent = '🔴 Live — streaming audio'
+          startBtn.disabled = true
+          stopBtn.disabled = false
+        }
+
+        ws.onmessage = (event) => {
+          const data = JSON.parse(event.data)
+          if (data.source === 'gladia') {
+            updateGladia(data)
+          } else if (data.source === 'voice') {
+            updateVoice(data)
+          } else if (data.source === 'server' && data.error) {
+            statusEl.textContent = `Server error: ${data.error}`
+          }
+        }
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error', error)
+          statusEl.textContent = '❌ Connection error'
+          stopRecording()
+        }
+
+        ws.onclose = () => {
+          statusEl.textContent = 'Connection closed'
+          stopRecording()
+        }
+      } catch (err) {
+        console.error('Failed to start recording', err)
+        statusEl.textContent = `❌ ${err.message || err}`
+        stopRecording()
+      }
+    })
+
+    stopBtn.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop' }))
+      }
+      stopRecording()
+    })
+
+    function startStreaming() {
+      audioContext = new AudioContext({ sampleRate: SAMPLE_RATE })
+      const source = audioContext.createMediaStreamSource(mediaStream)
+      processorNode = audioContext.createScriptProcessor(4096, 1, 1)
+
+      processorNode.onaudioprocess = (event) => {
+        if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) {
+          return
+        }
+
+        const input = event.inputBuffer.getChannelData(0)
+        const int16Buffer = floatTo16BitPCM(input)
+        const base64Data = arrayBufferToBase64(int16Buffer.buffer)
+
+        ws.send(JSON.stringify({
+          type: 'audio',
+          sample_rate: SAMPLE_RATE,
+          data: base64Data,
+        }))
+      }
+
+      source.connect(processorNode)
+      processorNode.connect(audioContext.destination)
+      isRecording = true
+    }
+
+    function stopRecording() {
+      if (isRecording) {
+        isRecording = false
+      }
+
+      startBtn.disabled = false
+      stopBtn.disabled = true
+
+      if (processorNode) {
+        processorNode.disconnect()
+        processorNode = null
+      }
+
+      if (audioContext) {
+        audioContext.close().catch(() => {})
+        audioContext = null
+      }
+
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop())
+        mediaStream = null
+      }
+
+      if (ws) {
+        ws.close()
+        ws = null
+      }
+    }
+
+    function floatTo16BitPCM(float32Array) {
+      const int16Array = new Int16Array(float32Array.length)
+      for (let i = 0; i < float32Array.length; i += 1) {
+        const s = Math.max(-1, Math.min(1, float32Array[i]))
+        int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
+      }
+      return int16Array
+    }
+
+    function arrayBufferToBase64(buffer) {
+      let binary = ''
+      const bytes = new Uint8Array(buffer)
+      const chunkSize = 0x8000
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize)
+        binary += String.fromCharCode.apply(null, chunk)
+      }
+      return btoa(binary)
+    }
+
+    function updateGladia(data) {
+      if (gladiaRaw) {
+        const rawPayload = data.raw ?? data
+        gladiaRaw.textContent = JSON.stringify(rawPayload, null, 2)
+      }
+
+      if (data.type === 'transcript') {
+        console.debug('Gladia transcript event', data)
+        statusEl.textContent = '📝 Live transcript streaming…'
+        if (typeof data.text === 'string') {
+          gladiaTranscript.textContent = data.text.trim() || '…'
+        }
+        if (typeof data.confidence === 'number') {
+          gladiaConfidence.textContent = data.confidence.toFixed(3)
+        }
+      } else if (data.type === 'sentiment_analysis') {
+        console.debug('Gladia sentiment event', data)
+        statusEl.textContent = '💡 Gladia sentiment update received'
+        if (data.sentiment) {
+          gladiaSentiment.textContent = data.sentiment
+          lastGladiaSentiment = data.sentiment
+        }
+        if (data.emotion) {
+          gladiaEmotion.textContent = data.emotion
+          lastGladiaEmotion = data.emotion
+        }
+      } else if (data.type === 'audio_chunk') {
+        statusEl.textContent = '📡 Streaming audio to Gladia…'
+      } else if (data.event === 'speech_start') {
+        statusEl.textContent = '🎙️ Gladia detected speech…'
+      } else if (data.event === 'speech_end') {
+        statusEl.textContent = '✅ Speech segment processed'
+      } else if (data.message === 'gladia_session_created') {
+        console.debug('Gladia session ready', data)
+        statusEl.textContent = 'Gladia session ready'
+      }
+      checkMismatch()
+    }
+
+    function updateVoice(data) {
+      if (data.sentiment) {
+        voiceSentiment.textContent = data.sentiment
+        lastVoiceSentiment = data.sentiment
+      }
+      if (data.emotion) {
+        voiceEmotion.textContent = data.emotion
+        lastVoiceEmotion = data.emotion
+      }
+      if (typeof data.confidence === 'number') {
+        voiceConfidence.textContent = Number(data.confidence).toFixed(3)
+      }
+      if (data.normalized_vad) {
+        valence.textContent = Number(data.normalized_vad.valence || 0).toFixed(3)
+        arousal.textContent = Number(data.normalized_vad.arousal || 0).toFixed(3)
+        dominance.textContent = Number(data.normalized_vad.dominance || 0).toFixed(3)
+      }
+      checkMismatch()
+    }
+
+    function checkMismatch() {
+      const sentimentMismatch =
+        lastGladiaSentiment &&
+        lastVoiceSentiment &&
+        lastGladiaSentiment !== lastVoiceSentiment
+
+      const emotionMismatch =
+        lastGladiaEmotion &&
+        lastVoiceEmotion &&
+        lastGladiaEmotion !== lastVoiceEmotion
+
+      const mismatch = sentimentMismatch && emotionMismatch
+      gladiaCard.classList.toggle('mismatch', mismatch)
+      voiceCard.classList.toggle('mismatch', mismatch)
+    }
+  </script>
+</body>
+</html>
+

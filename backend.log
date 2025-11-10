@@ -1,0 +1,62 @@
+/Users/aliimran/Sehar/gladia/realtime_server.py:58: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [68889]
+INFO:     Waiting for application startup.
+INFO:realtime_server:Initialising SER model on device cpu
+INFO:emotion_recognition:Loading SER model 3loi/SER-Odyssey-Baseline-WavLM-Multi-Attributes on device cpu
+`torch_dtype` is deprecated! Use `dtype` instead!
+INFO:realtime_server:SER model ready (sampling_rate=16000)
+INFO:realtime_server:Loading Gladia API key
+INFO:realtime_server:Gladia API key loaded successfully
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57652 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:57675 - "WebSocket /ws/analyze" [accepted]
+INFO:realtime_server:Client connected for real-time analysis
+ERROR:realtime_server:Failed to connect to Gladia: create_connection() got an unexpected keyword argument 'extra_headers'
+Traceback (most recent call last):
+  File "/Users/aliimran/Sehar/gladia/realtime_server.py", line 218, in analyze_endpoint
+    gladia_ws = await _connect_gladia_realtime()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aliimran/Sehar/gladia/realtime_server.py", line 109, in _connect_gladia_realtime
+    connection = await websockets.connect(GLADIA_REALTIME_WS, extra_headers=headers)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aliimran/Sehar/gladia/venv/lib/python3.12/site-packages/websockets/asyncio/client.py", line 541, in __await_impl__
+    self.connection = await self.create_connection()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aliimran/Sehar/gladia/venv/lib/python3.12/site-packages/websockets/asyncio/client.py", line 467, in create_connection
+    _, connection = await loop.create_connection(factory, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "uvloop/loop.pyx", line 1857, in uvloop.loop.Loop.create_connection
+TypeError: create_connection() got an unexpected keyword argument 'extra_headers'
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:57677 - "WebSocket /ws/analyze" [accepted]
+INFO:realtime_server:Client connected for real-time analysis
+ERROR:realtime_server:Failed to connect to Gladia: create_connection() got an unexpected keyword argument 'extra_headers'
+Traceback (most recent call last):
+  File "/Users/aliimran/Sehar/gladia/realtime_server.py", line 218, in analyze_endpoint
+    gladia_ws = await _connect_gladia_realtime()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aliimran/Sehar/gladia/realtime_server.py", line 109, in _connect_gladia_realtime
+    connection = await websockets.connect(GLADIA_REALTIME_WS, extra_headers=headers)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aliimran/Sehar/gladia/venv/lib/python3.12/site-packages/websockets/asyncio/client.py", line 541, in __await_impl__
+    self.connection = await self.create_connection()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aliimran/Sehar/gladia/venv/lib/python3.12/site-packages/websockets/asyncio/client.py", line 467, in create_connection
+    _, connection = await loop.create_connection(factory, **kwargs)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "uvloop/loop.pyx", line 1857, in uvloop.loop.Loop.create_connection
+TypeError: create_connection() got an unexpected keyword argument 'extra_headers'
+INFO:     connection open
+INFO:     connection closed
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [68889]
