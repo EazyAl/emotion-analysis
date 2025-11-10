@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <title>Real-Time Emotion Analysis</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.32.0/plotly.min.js"></script>
   <style>
     :root {
       color-scheme: dark;
@@ -174,6 +177,66 @@
       color: rgba(148, 163, 184, 0.75);
       line-height: 1.6;
     }
+    .visuals {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .graphs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+    }
+    .graph-card {
+      padding: 30px;
+      height: 360px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow: hidden;
+    }
+    .graph-card--wide {
+      height: 440px;
+    }
+    .graph-header {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .graph-header h2 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .graph-header p {
+      margin: 0;
+      font-size: 15px;
+      color: rgba(226, 232, 240, 0.68);
+      line-height: 1.55;
+    }
+    .graph-canvas {
+      width: 100%;
+      flex: 1;
+    }
+    .graph-card--wide .graph-canvas {
+      flex: 1;
+    }
+    #vadPlot {
+      width: 100%;
+      height: 100%;
+    }
+    .legend {
+      font-size: 13px;
+      color: rgba(148, 163, 184, 0.8);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      margin-top: 4px;
+    }
+    .legend strong {
+      color: #e2e8f0;
+    }
     @media (max-width: 600px) {
       .controls {
         flex-direction: column;
@@ -191,7 +254,7 @@
     <header>
       <h1>Real-Time Emotion Analysis</h1>
       <p class="subtitle">
-        Stream audio from your microphone and watch Gladia's text sentiment and our local vocal emotion analysis update live. Ideal for demos — no pre-processing required.
+        Stream audio from microphone and watch Gladia's text sentiment + local emotion analysis
       </p>
     </header>
 
@@ -254,6 +317,33 @@
         <p class="note">Our SER Odyssey WavLM model listens to vocal cues regardless of actual words.</p>
       </article>
     </section>
+
+    <section class="visuals" aria-label="Emotion Analytics Visualizations">
+      <div class="graphs-grid">
+        <article class="card graph-card">
+          <div class="graph-header">
+            <h2>📈 Sentiment Timeline</h2>
+            <p>Compare Gladia's text sentiment against vocal tone sentiment in real time.</p>
+          </div>
+          <canvas id="sentimentChart" class="graph-canvas" aria-label="Sentiment timeline chart" role="img"></canvas>
+        </article>
+        <article class="card graph-card">
+          <div class="graph-header">
+            <h2>🌈 Emotion Timeline</h2>
+            <p>Track dominant emotions detected by Gladia and our voice model over time.</p>
+          </div>
+          <canvas id="emotionChart" class="graph-canvas" aria-label="Emotion timeline chart" role="img"></canvas>
+          <div id="emotionLegend" class="legend" aria-live="polite"></div>
+        </article>
+      </div>
+      <article class="card graph-card graph-card--wide">
+        <div class="graph-header">
+          <h2>🧭 VAD Trajectory</h2>
+          <p>Observe how valence, arousal, and dominance evolve during the session.</p>
+        </div>
+        <div id="vadPlot" role="img" aria-label="Valence arousal dominance 3D plot"></div>
+      </article>
+    </section>
   </main>
 
   <script>
@@ -291,7 +381,456 @@
     let lastVoiceSentiment = null
     let lastVoiceEmotion = null
 
-    const SAMPLE_RATE = 16000
+    const TARGET_SAMPLE_RATE = 16000
+    const MAX_BUFFERED_AMOUNT = 512000
+    const MAX_HISTORY_POINTS = 600
+
+    let effectiveSampleRate = TARGET_SAMPLE_RATE
+    let chunkSeq = 0
+    let audioSampleClock = 0
+
+    const emotionIndex = new Map()
+    const emotionLegendEl = document.getElementById('emotionLegend')
+    const vadPlotEl = document.getElementById('vadPlot')
+
+    Chart.defaults.color = '#cbd5f5'
+    Chart.defaults.font.family = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    Chart.defaults.font.size = 13
+    Chart.defaults.borderColor = 'rgba(148, 163, 184, 0.2)'
+
+    const sentimentCtx = document.getElementById('sentimentChart').getContext('2d')
+    const sentimentChart = new Chart(sentimentCtx, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            id: 'gladia',
+            label: 'Gladia Sentiment',
+            data: [],
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.2)',
+            fill: false,
+            tension: 0.2,
+            pointRadius: 0,
+            stepped: 'before',
+          },
+          {
+            id: 'voice',
+            label: 'Voice Sentiment',
+            data: [],
+            borderColor: '#34d399',
+            backgroundColor: 'rgba(52, 211, 153, 0.18)',
+            fill: false,
+            tension: 0.2,
+            pointRadius: 0,
+            stepped: 'before',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: {
+          intersect: false,
+          mode: 'nearest',
+        },
+        scales: {
+          x: {
+            type: 'time',
+            time: {
+              tooltipFormat: 'HH:mm:ss',
+              displayFormats: {
+                second: 'HH:mm:ss',
+              },
+            },
+            grid: {
+              color: 'rgba(148, 163, 184, 0.08)',
+            },
+            ticks: {
+              color: 'rgba(148, 163, 184, 0.7)',
+            },
+          },
+          y: {
+            min: -1.2,
+            max: 1.2,
+            ticks: {
+              stepSize: 1,
+              color: 'rgba(148, 163, 184, 0.7)',
+              callback: (value) => sentimentLabelForValue(value),
+            },
+            grid: {
+              color: 'rgba(148, 163, 184, 0.12)',
+            },
+          },
+        },
+        plugins: {
+          legend: {
+            labels: {
+              usePointStyle: true,
+              padding: 20,
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${ctx.dataset.label}: ${sentimentLabelForValue(ctx.parsed.y)}`,
+            },
+          },
+        },
+      },
+    })
+
+    const emotionCtx = document.getElementById('emotionChart').getContext('2d')
+    const emotionChart = new Chart(emotionCtx, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            id: 'gladia',
+            label: 'Gladia Emotion',
+            data: [],
+            borderColor: '#818cf8',
+            backgroundColor: 'rgba(129, 140, 248, 0.2)',
+            fill: false,
+            tension: 0,
+            pointRadius: 0,
+            stepped: 'before',
+          },
+          {
+            id: 'voice',
+            label: 'Voice Emotion',
+            data: [],
+            borderColor: '#f472b6',
+            backgroundColor: 'rgba(244, 114, 182, 0.18)',
+            fill: false,
+            tension: 0,
+            pointRadius: 0,
+            stepped: 'before',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: {
+          intersect: false,
+          mode: 'nearest',
+        },
+        scales: {
+          x: {
+            type: 'time',
+            time: {
+              tooltipFormat: 'HH:mm:ss',
+              displayFormats: {
+                second: 'HH:mm:ss',
+              },
+            },
+            grid: {
+              color: 'rgba(148, 163, 184, 0.08)',
+            },
+            ticks: {
+              color: 'rgba(148, 163, 184, 0.7)',
+            },
+          },
+          y: {
+            min: -0.5,
+            max: 0.5,
+            ticks: {
+              stepSize: 1,
+              color: 'rgba(148, 163, 184, 0.7)',
+              callback: (value) => emotionLabelForValue(value),
+            },
+            grid: {
+              color: 'rgba(148, 163, 184, 0.12)',
+            },
+          },
+        },
+        plugins: {
+          legend: {
+            labels: {
+              usePointStyle: true,
+              padding: 20,
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${ctx.dataset.label}: ${emotionTooltipLabel(ctx.parsed.y)}`,
+            },
+          },
+        },
+      },
+    })
+
+    const vadHistory = {
+      valence: [],
+      arousal: [],
+      dominance: [],
+      timestamps: [],
+    }
+
+    const vadLayout = {
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: 'rgba(0,0,0,0)',
+      margin: { l: 0, r: 0, b: 0, t: 10 },
+      scene: {
+        xaxis: {
+          title: 'Valence',
+          range: [-1, 1],
+          gridcolor: 'rgba(148, 163, 184, 0.25)',
+          zerolinecolor: 'rgba(250, 204, 21, 0.6)',
+          color: '#cbd5f5',
+          backgroundcolor: 'rgba(15, 23, 42, 0.25)',
+        },
+        yaxis: {
+          title: 'Arousal',
+          range: [-1, 1],
+          gridcolor: 'rgba(148, 163, 184, 0.25)',
+          zerolinecolor: 'rgba(250, 204, 21, 0.6)',
+          color: '#cbd5f5',
+          backgroundcolor: 'rgba(15, 23, 42, 0.25)',
+        },
+        zaxis: {
+          title: 'Dominance',
+          range: [-1, 1],
+          gridcolor: 'rgba(148, 163, 184, 0.25)',
+          zerolinecolor: 'rgba(250, 204, 21, 0.6)',
+          color: '#cbd5f5',
+          backgroundcolor: 'rgba(15, 23, 42, 0.25)',
+        },
+        camera: {
+          eye: { x: 1.8, y: 1.4, z: 1.4 },
+        },
+      },
+    }
+
+    const vadConfig = {
+      responsive: true,
+      displaylogo: false,
+      modeBarButtonsToRemove: ['resetCameraDefault3d', 'lasso3d', 'select3d', 'zoom3d', 'pan3d', 'orbitRotation', 'tableRotation'],
+    }
+
+    let vadNeedsRedraw = false
+
+    let sentimentNeedsUpdate = false
+    let emotionNeedsUpdate = false
+
+    Plotly.newPlot(vadPlotEl, [createVadTrace()], vadLayout, vadConfig)
+    updateEmotionLegend()
+
+    function addSentimentPoint(source, sentiment) {
+      const value = normalizeSentiment(sentiment)
+      if (value === null) {
+        return
+      }
+      const dataset = sentimentChart.data.datasets.find((d) => d.id === source)
+      if (!dataset) {
+        return
+      }
+      dataset.data.push({
+        x: Date.now(),
+        y: value,
+      })
+      trimDataset(dataset.data)
+      requestSentimentUpdate()
+    }
+
+    function addEmotionPoint(source, emotion) {
+      const encoded = encodeEmotion(emotion)
+      if (encoded === null) {
+        return
+      }
+      const dataset = emotionChart.data.datasets.find((d) => d.id === source)
+      if (!dataset) {
+        return
+      }
+      dataset.data.push({
+        x: Date.now(),
+        y: encoded,
+      })
+      trimDataset(dataset.data)
+      emotionChart.options.scales.y.max = Math.max(emotionChart.options.scales.y.max ?? 0.5, (emotionIndex.size - 1) + 0.5)
+      requestEmotionUpdate()
+    }
+
+    function addVadPoint(valenceValue, arousalValue, dominanceValue) {
+      const v = Number(valenceValue)
+      const a = Number(arousalValue)
+      const d = Number(dominanceValue)
+      if (!Number.isFinite(v) || !Number.isFinite(a) || !Number.isFinite(d)) {
+        return
+      }
+      const timestamp = Date.now()
+      vadHistory.valence.push(v)
+      vadHistory.arousal.push(a)
+      vadHistory.dominance.push(d)
+      vadHistory.timestamps.push(timestamp)
+      trimArray(vadHistory.valence)
+      trimArray(vadHistory.arousal)
+      trimArray(vadHistory.dominance)
+      trimArray(vadHistory.timestamps)
+      scheduleVadRedraw()
+    }
+
+    function requestSentimentUpdate() {
+      if (sentimentNeedsUpdate) {
+        return
+      }
+      sentimentNeedsUpdate = true
+      requestAnimationFrame(() => {
+        sentimentNeedsUpdate = false
+        sentimentChart.update('none')
+      })
+    }
+
+    function requestEmotionUpdate() {
+      if (emotionNeedsUpdate) {
+        return
+      }
+      emotionNeedsUpdate = true
+      requestAnimationFrame(() => {
+        emotionNeedsUpdate = false
+        emotionChart.update('none')
+      })
+    }
+
+    function scheduleVadRedraw() {
+      if (vadNeedsRedraw) {
+        return
+      }
+      vadNeedsRedraw = true
+      requestAnimationFrame(() => {
+        vadNeedsRedraw = false
+        Plotly.react(vadPlotEl, [createVadTrace()], vadLayout, vadConfig)
+      })
+    }
+
+    function createVadTrace() {
+      const offsets = vadHistory.timestamps.length
+        ? vadHistory.timestamps.map((ts) => (ts - vadHistory.timestamps[0]) / 1000)
+        : []
+      const formattedTimes = vadHistory.timestamps.map((ts) => new Date(ts).toLocaleTimeString())
+      return {
+        type: 'scatter3d',
+        mode: 'lines+markers',
+        x: [...vadHistory.valence],
+        y: [...vadHistory.arousal],
+        z: [...vadHistory.dominance],
+        text: formattedTimes,
+        hovertemplate: 'Valence: %{x:.3f}<br>Arousal: %{y:.3f}<br>Dominance: %{z:.3f}<br>Time: %{text}<extra></extra>',
+        marker: {
+          size: 5,
+          color: offsets.length ? offsets : undefined,
+          colorscale: 'Magma',
+          showscale: offsets.length > 1,
+          colorbar: {
+            title: 'Seconds',
+            tickcolor: '#cbd5f5',
+            tickfont: { color: '#cbd5f5' },
+            titlefont: { color: '#cbd5f5' },
+            bgcolor: 'rgba(15, 23, 42, 0.55)',
+          },
+        },
+        line: {
+          width: 3,
+          color: '#38bdf8',
+        },
+      }
+    }
+
+    function normalizeSentiment(sentiment) {
+      if (!sentiment) {
+        return null
+      }
+      const normalized = sentiment.toString().trim().toLowerCase()
+      if (!normalized) {
+        return null
+      }
+      if (normalized.includes('positive')) return 1
+      if (normalized.includes('negative')) return -1
+      if (normalized.includes('neutral')) return 0
+      if (normalized.includes('mixed')) return 0
+      if (normalized.includes('unknown')) return 0
+      return null
+    }
+
+    function sentimentLabelForValue(value) {
+      if (value >= 0.75) return 'Positive'
+      if (value <= -0.75) return 'Negative'
+      if (value === 0) return 'Neutral'
+      if (Number.isFinite(value)) {
+        return value.toFixed(2)
+      }
+      return '—'
+    }
+
+    function encodeEmotion(emotion) {
+      if (!emotion) {
+        return null
+      }
+      const normalized = emotion.toString().trim().toLowerCase()
+      if (!normalized) {
+        return null
+      }
+      if (!emotionIndex.has(normalized)) {
+        emotionIndex.set(normalized, emotionIndex.size)
+        updateEmotionLegend()
+      }
+      return emotionIndex.get(normalized)
+    }
+
+    function emotionLabelForValue(value) {
+      if (!Number.isFinite(value)) {
+        return ''
+      }
+      for (const [label, idx] of emotionIndex.entries()) {
+        if (idx === value) {
+          return prettifyEmotion(label)
+        }
+      }
+      return ''
+    }
+
+    function emotionTooltipLabel(value) {
+      const label = emotionLabelForValue(value)
+      return label || '—'
+    }
+
+    function updateEmotionLegend() {
+      if (!emotionLegendEl) {
+        return
+      }
+      if (emotionIndex.size === 0) {
+        emotionLegendEl.textContent = 'Waiting for emotion data…'
+        return
+      }
+
+      const entries = Array.from(emotionIndex.entries())
+        .sort((a, b) => a[1] - b[1])
+        .map(([label]) => prettifyEmotion(label))
+
+      emotionLegendEl.innerHTML = `<strong>Tracked emotions:</strong> ${entries.join(', ')}`
+    }
+
+    function prettifyEmotion(value) {
+      return value
+        .split(/[\s_]+/)
+        .filter(Boolean)
+        .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+        .join(' ')
+    }
+
+    function trimDataset(points) {
+      while (points.length > MAX_HISTORY_POINTS) {
+        points.shift()
+      }
+    }
+
+    function trimArray(array) {
+      while (array.length > MAX_HISTORY_POINTS) {
+        array.shift()
+      }
+    }
 
     startBtn.addEventListener('click', async () => {
       if (isRecording) return
@@ -301,7 +840,7 @@
         mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
-            sampleRate: SAMPLE_RATE,
+            sampleRate: TARGET_SAMPLE_RATE,
             echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: false,
@@ -311,7 +850,8 @@
         ws = new WebSocket(WS_URL)
 
         ws.onopen = () => {
-          startStreaming()
+          const rate = startStreaming()
+          sendStartMessage(rate)
           statusEl.textContent = '🔴 Live — streaming audio'
           startBtn.disabled = true
           stopBtn.disabled = false
@@ -353,12 +893,23 @@
     })
 
     function startStreaming() {
-      audioContext = new AudioContext({ sampleRate: SAMPLE_RATE })
+      audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE })
+      effectiveSampleRate = audioContext.sampleRate
+      chunkSeq = 0
+      audioSampleClock = 0
+
       const source = audioContext.createMediaStreamSource(mediaStream)
-      processorNode = audioContext.createScriptProcessor(4096, 1, 1)
+      processorNode = audioContext.createScriptProcessor(2048, 1, 1)
 
       processorNode.onaudioprocess = (event) => {
         if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) {
+          return
+        }
+
+        if (ws.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+          console.warn('Dropping audio chunk due to backpressure')
+          audioSampleClock += event.inputBuffer.getChannelData(0).length
+          chunkSeq += 1
           return
         }
 
@@ -368,14 +919,23 @@
 
         ws.send(JSON.stringify({
           type: 'audio',
-          sample_rate: SAMPLE_RATE,
+          seq: chunkSeq,
+          t0_ms: Math.round((audioSampleClock / effectiveSampleRate) * 1000),
+          t1_ms: Math.round(((audioSampleClock + input.length) / effectiveSampleRate) * 1000),
+          sample_rate: effectiveSampleRate,
+          format: 'pcm16',
+          channels: 1,
           data: base64Data,
         }))
+
+        audioSampleClock += input.length
+        chunkSeq += 1
       }
 
       source.connect(processorNode)
       processorNode.connect(audioContext.destination)
       isRecording = true
+      return effectiveSampleRate
     }
 
     function stopRecording() {
@@ -405,6 +965,20 @@
         ws.close()
         ws = null
       }
+    }
+
+    function sendStartMessage(rate) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return
+      }
+
+      ws.send(JSON.stringify({
+        type: 'start',
+        sample_rate: rate,
+        format: 'pcm16',
+        channels: 1,
+        language: 'en',
+      }))
     }
 
     function floatTo16BitPCM(float32Array) {
@@ -448,10 +1022,12 @@
         if (data.sentiment) {
           gladiaSentiment.textContent = data.sentiment
           lastGladiaSentiment = data.sentiment
+          addSentimentPoint('gladia', data.sentiment)
         }
         if (data.emotion) {
           gladiaEmotion.textContent = data.emotion
           lastGladiaEmotion = data.emotion
+          addEmotionPoint('gladia', data.emotion)
         }
       } else if (data.type === 'audio_chunk') {
         statusEl.textContent = '📡 Streaming audio to Gladia…'
@@ -470,18 +1046,24 @@
       if (data.sentiment) {
         voiceSentiment.textContent = data.sentiment
         lastVoiceSentiment = data.sentiment
+        addSentimentPoint('voice', data.sentiment)
       }
       if (data.emotion) {
         voiceEmotion.textContent = data.emotion
         lastVoiceEmotion = data.emotion
+        addEmotionPoint('voice', data.emotion)
       }
       if (typeof data.confidence === 'number') {
         voiceConfidence.textContent = Number(data.confidence).toFixed(3)
       }
       if (data.normalized_vad) {
-        valence.textContent = Number(data.normalized_vad.valence || 0).toFixed(3)
-        arousal.textContent = Number(data.normalized_vad.arousal || 0).toFixed(3)
-        dominance.textContent = Number(data.normalized_vad.dominance || 0).toFixed(3)
+        const v = Number(data.normalized_vad.valence ?? 0)
+        const a = Number(data.normalized_vad.arousal ?? 0)
+        const d = Number(data.normalized_vad.dominance ?? 0)
+        valence.textContent = v.toFixed(3)
+        arousal.textContent = a.toFixed(3)
+        dominance.textContent = d.toFixed(3)
+        addVadPoint(v, a, d)
       }
       checkMismatch()
     }
